@@ -1,82 +1,74 @@
-import mysql.connector
-from mysql.connector import Error
-from itemadapter import ItemAdapter
+import pyodbc
 
-class MySQLPipeline:
-    def __init__(self, host, database, user, password):
-        self.host = host
-        self.database = database
-        self.user = user
-        self.password = password
+class SQLServerPipeline:
+    def __init__(self, connection_string):
+        self.connection_string = connection_string
         self.connection = None
         self.cursor = None
 
     @classmethod
     def from_crawler(cls, crawler):
-        return cls(
-            host=crawler.settings.get('MYSQL_HOST'),
-            database=crawler.settings.get('MYSQL_DATABASE'),
-            user=crawler.settings.get('MYSQL_USER'),
-            password=crawler.settings.get('MYSQL_PASSWORD')
+        # ساخت connection string از اطلاعاتی که داری
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={crawler.settings.get('SQL_SERVER')};"
+            f"DATABASE={crawler.settings.get('SQL_DATABASE')};"
+            f"UID={crawler.settings.get('SQL_USER')};"
+            f"PWD={crawler.settings.get('SQL_PASSWORD')};"
+            f"TrustServerCertificate=yes;"
+            f"Encrypt=yes"
         )
+        return cls(conn_str)
 
     def open_spider(self, spider):
         try:
-            self.connection = mysql.connector.connect(
-                host=self.host,
-                database=self.database,
-                user=self.user,
-                password=self.password,
-                charset='utf8mb4'
-            )
+            self.connection = pyodbc.connect(self.connection_string)
             self.cursor = self.connection.cursor()
             self.create_table()
-        except Error as e:
+        except Exception as e:
             spider.logger.error(f"Connection error: {e}")
 
     def create_table(self):
         query = """
-        CREATE TABLE IF NOT EXISTS products (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            product_id VARCHAR(100),
-            name VARCHAR(500),
-            brand VARCHAR(255),
-            category VARCHAR(500),
-            price VARCHAR(100),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY unique_product (product_id)
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='products' AND xtype='U')
+        CREATE TABLE products (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            product_id NVARCHAR(100),
+            name NVARCHAR(500),
+            brand NVARCHAR(255),
+            category NVARCHAR(500),
+            price NVARCHAR(100),
+            created_at DATETIME DEFAULT GETDATE(),
+            CONSTRAINT unique_product UNIQUE (product_id)
+        )
         """
         self.cursor.execute(query)
         self.connection.commit()
 
     def process_item(self, item, spider):
         try:
-            adapter = ItemAdapter(item)
-            
             query = """
-            INSERT INTO products (product_id, name, brand, category, price)
-            VALUES (%s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                name = VALUES(name),
-                brand = VALUES(brand),
-                category = VALUES(category),
-                price = VALUES(price)
+            MERGE products AS target
+            USING (SELECT ? AS product_id) AS source
+            ON target.product_id = source.product_id
+            WHEN MATCHED THEN
+                UPDATE SET name = ?, brand = ?, category = ?, price = ?
+            WHEN NOT MATCHED THEN
+                INSERT (product_id, name, brand, category, price)
+                VALUES (?, ?, ?, ?, ?);
             """
             
             self.cursor.execute(query, (
-                adapter.get('product_id'),
-                adapter.get('name'),
-                adapter.get('brand'),
-                adapter.get('category'),
-                adapter.get('price')
+                item.get('product_id'),
+                item.get('name'), item.get('brand'), item.get('category'), item.get('price'),
+                item.get('product_id'), item.get('name'), item.get('brand'), 
+                item.get('category'), item.get('price')
             ))
             
             self.connection.commit()
             
-        except Error as e:
+        except Exception as e:
             spider.logger.error(f"Error saving: {e}")
-            self.connection.rollback()
         
         return item
 

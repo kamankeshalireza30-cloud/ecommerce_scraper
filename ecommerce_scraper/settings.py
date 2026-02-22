@@ -1,7 +1,7 @@
 # جایگزین کردن MySQL Pipeline با SQL Server Pipeline
-ITEM_PIPELINES = {
-    'ecommerce_scraper.pipelines.SQLServerPipeline': 300,
-}
+#ITEM_PIPELINES = {
+#    'ecommerce_scraper.pipelines.SQLServerPipeline': 300,
+#}
 
 # تنظیمات SQL Server (با اطلاعات خودت)
 SQL_SERVER = 'localhost'  # یا localhost
